@@ -186,6 +186,7 @@ type MediaPacket struct {
 	Codec              string
 	Data               []byte
 	TimestampMicrosecs uint32
+	HasTimestamp       bool
 	UnixTime           *time.Time
 	Width              uint32
 	Height             uint32

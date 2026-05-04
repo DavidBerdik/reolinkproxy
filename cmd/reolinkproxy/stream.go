@@ -396,6 +396,12 @@ type audioPublisher struct {
 	lateIgnored   bool
 }
 
+type mediaTimestamp struct {
+	Microseconds  uint64
+	Valid         bool
+	Authoritative bool
+}
+
 func (p *audioPublisher) ready() bool {
 	return p.media != nil && (p.aacEncoder != nil || p.g711Encoder != nil)
 }
@@ -416,14 +422,14 @@ func (p *audioPublisher) markUnsupported(reason string) {
 	log.Printf("audio passthrough disabled: %s", reason)
 }
 
-func (p *audioPublisher) processAAC(data []byte, baseTimeMicroseconds uint64, handler *rtspStreamHandler, meta *streamMetadata, publish bool) error {
+func (p *audioPublisher) processAAC(data []byte, timestamp mediaTimestamp, handler *rtspStreamHandler, meta *streamMetadata, publish bool) error {
 	aus, cfg, err := parseAACAccessUnits(data)
 	if err != nil {
 		p.markUnsupported(fmt.Sprintf("invalid AAC/ADTS payload: %v", err))
 		return nil
 	}
 
-	expectedTS := rtpTimestampForClock(baseTimeMicroseconds, cfg.SampleRate)
+	expectedTS, hasExpectedTS := rtpTimestampForMediaTime(timestamp, cfg.SampleRate)
 
 	if !p.ready() {
 		if handler.ready() {
@@ -452,7 +458,10 @@ func (p *audioPublisher) processAAC(data []byte, baseTimeMicroseconds uint64, ha
 			Formats: []format.Format{audioFormat},
 		}
 		p.aacEncoder = encoder
-		p.nextTimestamp = expectedTS
+		p.nextTimestamp = 0
+		if hasExpectedTS {
+			p.nextTimestamp = expectedTS
+		}
 		meta.setAudioAAC(cfg.SampleRate, cfg.ChannelCount)
 
 		log.Printf("audio configured codec=AAC sample_rate=%d channels=%d", cfg.SampleRate, cfg.ChannelCount)
@@ -470,16 +479,25 @@ func (p *audioPublisher) processAAC(data []byte, baseTimeMicroseconds uint64, ha
 		return fmt.Errorf("encode AAC RTP: %w", err)
 	}
 
+	baseTimestamp := p.nextTimestamp
+	if timestamp.Authoritative && hasExpectedTS {
+		baseTimestamp = expectedTS
+	}
 	for _, pkt := range pkts {
-		pkt.Timestamp = p.nextTimestamp
+		pkt.Timestamp += baseTimestamp
 		handler.writePacket(p.media, pkt)
 	}
 
-	p.nextTimestamp += uint32(len(aus)) * mpeg4audio.SamplesPerAccessUnit
+	duration := uint32(len(aus)) * mpeg4audio.SamplesPerAccessUnit
+	if timestamp.Authoritative && hasExpectedTS {
+		p.nextTimestamp = expectedTS + duration
+	} else {
+		p.nextTimestamp += duration
+	}
 	return nil
 }
 
-func (p *audioPublisher) processADPCM(data []byte, baseTimeMicroseconds uint64, handler *rtspStreamHandler, meta *streamMetadata, publish bool) error {
+func (p *audioPublisher) processADPCM(data []byte, timestamp mediaTimestamp, handler *rtspStreamHandler, meta *streamMetadata, publish bool) error {
 	if p.adpcmDecoder == nil {
 		p.adpcmDecoder = &baichuan.ADPCMDecoder{}
 	}
@@ -490,7 +508,7 @@ func (p *audioPublisher) processADPCM(data []byte, baseTimeMicroseconds uint64, 
 	sampleRate := 8000 // Reolink usually sends ADPCM at 8kHz
 	channelCount := 1
 
-	expectedTS := rtpTimestampForClock(baseTimeMicroseconds, sampleRate)
+	expectedTS, hasExpectedTS := rtpTimestampForMediaTime(timestamp, sampleRate)
 
 	if !p.ready() {
 		if handler.ready() {
@@ -518,7 +536,10 @@ func (p *audioPublisher) processADPCM(data []byte, baseTimeMicroseconds uint64, 
 			Formats: []format.Format{audioFormat},
 		}
 		p.g711Encoder = encoder
-		p.nextTimestamp = expectedTS
+		p.nextTimestamp = 0
+		if hasExpectedTS {
+			p.nextTimestamp = expectedTS
+		}
 		meta.setAudioG711(sampleRate, channelCount)
 
 		log.Printf("audio configured codec=PCMA sample_rate=%d channels=%d", sampleRate, channelCount)
@@ -536,12 +557,21 @@ func (p *audioPublisher) processADPCM(data []byte, baseTimeMicroseconds uint64, 
 		return fmt.Errorf("encode G711 RTP: %w", err)
 	}
 
+	baseTimestamp := p.nextTimestamp
+	if timestamp.Authoritative && hasExpectedTS {
+		baseTimestamp = expectedTS
+	}
 	for _, pkt := range pkts {
-		pkt.Timestamp = p.nextTimestamp
+		pkt.Timestamp += baseTimestamp
 		handler.writePacket(p.media, pkt)
 	}
 
-	p.nextTimestamp += uint32(len(pcm))
+	duration := uint32(len(pcm))
+	if timestamp.Authoritative && hasExpectedTS {
+		p.nextTimestamp = expectedTS + duration
+	} else {
+		p.nextTimestamp += duration
+	}
 	return nil
 }
 
@@ -800,6 +830,13 @@ func coalesce(next []byte, fallback []byte) []byte {
 
 func rtpTimestampForClock(microseconds uint64, clockRate int) uint32 {
 	return uint32((microseconds * uint64(clockRate)) / 1_000_000)
+}
+
+func rtpTimestampForMediaTime(timestamp mediaTimestamp, clockRate int) (uint32, bool) {
+	if !timestamp.Valid {
+		return 0, false
+	}
+	return rtpTimestampForClock(timestamp.Microseconds, clockRate), true
 }
 
 func getOutboundIP() string {

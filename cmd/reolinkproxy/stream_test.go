@@ -7,6 +7,8 @@ import (
 
 	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg4audio"
 	"github.com/pion/rtp"
+
+	"github.com/shareed2k/reolinkproxy/pkg/baichuan"
 )
 
 func TestFixH265AggregationTemporalID(t *testing.T) {
@@ -63,6 +65,66 @@ func TestParseAACAccessUnits(t *testing.T) {
 	}
 	if got, want := cfg.ChannelCount, 1; got != want {
 		t.Fatalf("cfg.ChannelCount = %d, want %d", got, want)
+	}
+}
+
+func TestTimestampUnwrapperWrapsForward(t *testing.T) {
+	t.Parallel()
+
+	var timestamps timestampUnwrapper
+	if got, want := timestamps.unwrap(0xfffffff0), uint64(0xfffffff0); got != want {
+		t.Fatalf("first unwrap = %d, want %d", got, want)
+	}
+	if got, want := timestamps.unwrap(20), uint64(0x100000014); got != want {
+		t.Fatalf("wrapped unwrap = %d, want %d", got, want)
+	}
+}
+
+func TestAudioTimestampForPacketUsesFallbackWithoutUpdatingAudioClock(t *testing.T) {
+	t.Parallel()
+
+	var audioTimestamps timestampUnwrapper
+	fallback := mediaTimestamp{
+		Microseconds:  3_000_000_000,
+		Valid:         true,
+		Authoritative: true,
+	}
+
+	got := audioTimestampForPacket(baichuan.MediaPacket{Kind: baichuan.MediaPacketAAC}, &audioTimestamps, fallback)
+	if got != fallback {
+		t.Fatalf("audioTimestampForPacket() = %+v, want %+v", got, fallback)
+	}
+	if audioTimestamps.highest != 0 {
+		t.Fatalf("audioTimestamps.highest = %d, want 0", audioTimestamps.highest)
+	}
+}
+
+func TestAudioTimestampForPacketUsesAuthoritativePacketTimestamp(t *testing.T) {
+	t.Parallel()
+
+	var audioTimestamps timestampUnwrapper
+	fallback := mediaTimestamp{
+		Microseconds:  3_000_000_000,
+		Valid:         true,
+		Authoritative: true,
+	}
+	packet := baichuan.MediaPacket{
+		Kind:               baichuan.MediaPacketAAC,
+		TimestampMicrosecs: 1234,
+		HasTimestamp:       true,
+	}
+
+	got := audioTimestampForPacket(packet, &audioTimestamps, fallback)
+	want := mediaTimestamp{
+		Microseconds:  1234,
+		Valid:         true,
+		Authoritative: true,
+	}
+	if got != want {
+		t.Fatalf("audioTimestampForPacket() = %+v, want %+v", got, want)
+	}
+	if audioTimestamps.highest != 1234 {
+		t.Fatalf("audioTimestamps.highest = %d, want 1234", audioTimestamps.highest)
 	}
 }
 

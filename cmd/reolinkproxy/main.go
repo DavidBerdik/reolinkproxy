@@ -408,28 +408,29 @@ func runStream(
 	lifecycleCfg streamLifecycleConfig,
 ) {
 	var (
-		infoPackets         uint64
-		videoPackets        uint64
-		audioPackets        uint64
-		videoBytes          uint64
-		firstVideo          bool
-		videoFormat         format.Format
-		videoEncoder        any
-		lastVideoPackets    uint64
-		stalledDuration     time.Duration
-		paused              bool
-		pauseReason         string
-		reader              *baichuan.MediaReader
-		readerPackets       <-chan baichuan.MediaPacket
-		previewClient       *baichuan.Client
-		idleSince           time.Time
-		lastPacketAt        time.Time
-		lastVideoAt         time.Time
-		nextReconnectAt     time.Time
-		reconnectDelay      = 50 * time.Millisecond
-		frameCount          int
-		highestContinuousUS uint64
-		continuousUS        uint64
+		infoPackets      uint64
+		videoPackets     uint64
+		audioPackets     uint64
+		videoBytes       uint64
+		firstVideo       bool
+		videoFormat      format.Format
+		videoEncoder     any
+		lastVideoPackets uint64
+		stalledDuration  time.Duration
+		paused           bool
+		pauseReason      string
+		reader           *baichuan.MediaReader
+		readerPackets    <-chan baichuan.MediaPacket
+		previewClient    *baichuan.Client
+		idleSince        time.Time
+		lastPacketAt     time.Time
+		lastVideoAt      time.Time
+		nextReconnectAt  time.Time
+		reconnectDelay   = 50 * time.Millisecond
+		frameCount       int
+		videoTimestamps  timestampUnwrapper
+		audioTimestamps  timestampUnwrapper
+		lastVideoTime    mediaTimestamp
 	)
 
 	videoMedia := &description.Media{
@@ -570,11 +571,6 @@ func runStream(
 			}
 			lastPacketAt = time.Now()
 
-			continuousUS = unwrapTimestamp(packet.TimestampMicrosecs, highestContinuousUS)
-			if continuousUS > highestContinuousUS {
-				highestContinuousUS = continuousUS
-			}
-
 			switch packet.Kind {
 			case baichuan.MediaPacketInfoV1, baichuan.MediaPacketInfoV2:
 				infoPackets++
@@ -593,6 +589,16 @@ func runStream(
 				nalus := splitAnnexB(packet.Data)
 				if len(nalus) == 0 {
 					continue
+				}
+				if !packet.HasTimestamp {
+					log.Printf("stream %s skipping video packet without timestamp", meta.name)
+					continue
+				}
+				continuousUS := videoTimestamps.unwrap(packet.TimestampMicrosecs)
+				lastVideoTime = mediaTimestamp{
+					Microseconds:  continuousUS,
+					Valid:         true,
+					Authoritative: true,
 				}
 
 				if videoFormat == nil {
@@ -696,13 +702,15 @@ func runStream(
 
 			case baichuan.MediaPacketAAC:
 				audioPackets++
-				if err := audio.processAAC(packet.Data, continuousUS, handler, meta, !updatePauseState(time.Now())); err != nil {
+				timestamp := audioTimestampForPacket(packet, &audioTimestamps, lastVideoTime)
+				if err := audio.processAAC(packet.Data, timestamp, handler, meta, !updatePauseState(time.Now())); err != nil {
 					log.Printf("stream %s audio publish error: %v", meta.name, err)
 				}
 
 			case baichuan.MediaPacketADPCM:
 				audioPackets++
-				if err := audio.processADPCM(packet.Data, continuousUS, handler, meta, !updatePauseState(time.Now())); err != nil {
+				timestamp := audioTimestampForPacket(packet, &audioTimestamps, lastVideoTime)
+				if err := audio.processADPCM(packet.Data, timestamp, handler, meta, !updatePauseState(time.Now())); err != nil {
 					log.Printf("stream %s audio adpcm publish error: %v", meta.name, err)
 				}
 			}
@@ -743,6 +751,29 @@ func runStream(
 			updatePauseState(time.Now())
 		}
 	}
+}
+
+type timestampUnwrapper struct {
+	highest uint64
+}
+
+func (u *timestampUnwrapper) unwrap(ts32 uint32) uint64 {
+	continuous := unwrapTimestamp(ts32, u.highest)
+	if continuous > u.highest {
+		u.highest = continuous
+	}
+	return continuous
+}
+
+func audioTimestampForPacket(packet baichuan.MediaPacket, audioTimestamps *timestampUnwrapper, fallback mediaTimestamp) mediaTimestamp {
+	if packet.HasTimestamp {
+		return mediaTimestamp{
+			Microseconds:  audioTimestamps.unwrap(packet.TimestampMicrosecs),
+			Valid:         true,
+			Authoritative: true,
+		}
+	}
+	return fallback
 }
 
 func unwrapTimestamp(ts32 uint32, highest64 uint64) uint64 {
