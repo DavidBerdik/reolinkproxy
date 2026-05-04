@@ -408,27 +408,26 @@ func runStream(
 	lifecycleCfg streamLifecycleConfig,
 ) {
 	var (
-		infoPackets          uint64
-		videoPackets         uint64
-		audioPackets         uint64
-		videoBytes           uint64
-		firstVideo           bool
-		videoFormat          format.Format
-		videoEncoder         interface{}
-
-		lastVideoPackets uint64
-		stalledDuration  time.Duration
-		paused           bool
-		pauseReason      string
-		reader           *baichuan.MediaReader
-		readerPackets    <-chan baichuan.MediaPacket
-		previewClient    *baichuan.Client
-		idleSince        time.Time
-		lastPacketAt     time.Time
-		lastVideoAt      time.Time
-		nextReconnectAt  time.Time
-		reconnectDelay   = 50 * time.Millisecond
-		frameCount       int
+		infoPackets         uint64
+		videoPackets        uint64
+		audioPackets        uint64
+		videoBytes          uint64
+		firstVideo          bool
+		videoFormat         format.Format
+		videoEncoder        any
+		lastVideoPackets    uint64
+		stalledDuration     time.Duration
+		paused              bool
+		pauseReason         string
+		reader              *baichuan.MediaReader
+		readerPackets       <-chan baichuan.MediaPacket
+		previewClient       *baichuan.Client
+		idleSince           time.Time
+		lastPacketAt        time.Time
+		lastVideoAt         time.Time
+		nextReconnectAt     time.Time
+		reconnectDelay      = 50 * time.Millisecond
+		frameCount          int
 		highestContinuousUS uint64
 		continuousUS        uint64
 	)
@@ -753,12 +752,12 @@ func unwrapTimestamp(ts32 uint32, highest64 uint64) uint64 {
 
 	high32 := highest64 >> 32
 	cand1 := (high32 << 32) | uint64(ts32)
-	
+
 	cand2 := cand1
 	if cand1 >= 0x100000000 {
 		cand2 = cand1 - 0x100000000
 	}
-	
+
 	cand3 := cand1 + 0x100000000
 
 	absDiff := func(a, b uint64) uint64 {
