@@ -80,19 +80,76 @@ func TestTimestampUnwrapperWrapsForward(t *testing.T) {
 	}
 }
 
-func TestAudioTimestampForPacketUsesFallbackWithoutUpdatingAudioClock(t *testing.T) {
+func TestRTPTimestampGuardClampsBackwardJitter(t *testing.T) {
+	t.Parallel()
+
+	var timestamps rtpTimestampGuard
+	if got, want := timestamps.next(1_492_479), uint32(1_492_479); got != want {
+		t.Fatalf("first next = %d, want %d", got, want)
+	}
+	if got, want := timestamps.next(1_487_732), uint32(1_492_480); got != want {
+		t.Fatalf("backward next = %d, want %d", got, want)
+	}
+	if got, want := timestamps.next(1_492_480), uint32(1_492_481); got != want {
+		t.Fatalf("equal next = %d, want %d", got, want)
+	}
+}
+
+func TestRTPTimestampGuardAllowsForwardWrap(t *testing.T) {
+	t.Parallel()
+
+	var timestamps rtpTimestampGuard
+	if got, want := timestamps.next(0xfffffff0), uint32(0xfffffff0); got != want {
+		t.Fatalf("first next = %d, want %d", got, want)
+	}
+	if got, want := timestamps.next(20), uint32(20); got != want {
+		t.Fatalf("wrapped next = %d, want %d", got, want)
+	}
+}
+
+func TestRTPTimestampGuardClampsAudioRangeStart(t *testing.T) {
+	t.Parallel()
+
+	var timestamps rtpTimestampGuard
+	pkts := []*rtp.Packet{{Header: rtp.Header{Timestamp: 0}}}
+
+	if got, want := timestamps.applyBaseToPackets(pkts, 190_464, 1024), uint32(190_464); got != want {
+		t.Fatalf("first base = %d, want %d", got, want)
+	}
+	if got, want := timestamps.applyBaseToPackets(pkts, 191_475, 1024), uint32(191_488); got != want {
+		t.Fatalf("backward base = %d, want %d", got, want)
+	}
+	if got, want := timestamps.applyBaseToPackets(pkts, 192_512, 1024), uint32(192_512); got != want {
+		t.Fatalf("equal-to-end base = %d, want %d", got, want)
+	}
+}
+
+func TestRTPTimestampGuardShiftsAudioPacketBatch(t *testing.T) {
+	t.Parallel()
+
+	var timestamps rtpTimestampGuard
+	pkts := []*rtp.Packet{
+		{Header: rtp.Header{Timestamp: 0}},
+		{Header: rtp.Header{Timestamp: 1024}},
+	}
+
+	if got, want := timestamps.applyBaseToPackets(pkts, 1000, 2048), uint32(1000); got != want {
+		t.Fatalf("first base = %d, want %d", got, want)
+	}
+	if got, want := timestamps.applyBaseToPackets(pkts, 2000, 2048), uint32(3048); got != want {
+		t.Fatalf("shifted base = %d, want %d", got, want)
+	}
+}
+
+func TestAudioTimestampForPacketIgnoresFallbackWhenPacketHasNoTimestamp(t *testing.T) {
 	t.Parallel()
 
 	var audioTimestamps timestampUnwrapper
-	fallback := mediaTimestamp{
-		Microseconds:  3_000_000_000,
-		Valid:         true,
-		Authoritative: true,
-	}
 
-	got := audioTimestampForPacket(baichuan.MediaPacket{Kind: baichuan.MediaPacketAAC}, &audioTimestamps, fallback)
-	if got != fallback {
-		t.Fatalf("audioTimestampForPacket() = %+v, want %+v", got, fallback)
+	got := audioTimestampForPacket(baichuan.MediaPacket{Kind: baichuan.MediaPacketAAC}, &audioTimestamps)
+	want := mediaTimestamp{}
+	if got != want {
+		t.Fatalf("audioTimestampForPacket() = %+v, want %+v", got, want)
 	}
 	if audioTimestamps.highest != 0 {
 		t.Fatalf("audioTimestamps.highest = %d, want 0", audioTimestamps.highest)
@@ -103,18 +160,13 @@ func TestAudioTimestampForPacketUsesAuthoritativePacketTimestamp(t *testing.T) {
 	t.Parallel()
 
 	var audioTimestamps timestampUnwrapper
-	fallback := mediaTimestamp{
-		Microseconds:  3_000_000_000,
-		Valid:         true,
-		Authoritative: true,
-	}
 	packet := baichuan.MediaPacket{
 		Kind:               baichuan.MediaPacketAAC,
 		TimestampMicrosecs: 1234,
 		HasTimestamp:       true,
 	}
 
-	got := audioTimestampForPacket(packet, &audioTimestamps, fallback)
+	got := audioTimestampForPacket(packet, &audioTimestamps)
 	want := mediaTimestamp{
 		Microseconds:  1234,
 		Valid:         true,

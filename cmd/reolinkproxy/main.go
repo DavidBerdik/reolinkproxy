@@ -429,8 +429,8 @@ func runStream(
 		reconnectDelay   = 50 * time.Millisecond
 		frameCount       int
 		videoTimestamps  timestampUnwrapper
+		videoRTP         rtpTimestampGuard
 		audioTimestamps  timestampUnwrapper
-		lastVideoTime    mediaTimestamp
 	)
 
 	videoMedia := &description.Media{
@@ -595,11 +595,6 @@ func runStream(
 					continue
 				}
 				continuousUS := videoTimestamps.unwrap(packet.TimestampMicrosecs)
-				lastVideoTime = mediaTimestamp{
-					Microseconds:  continuousUS,
-					Valid:         true,
-					Authoritative: true,
-				}
 
 				if videoFormat == nil {
 					meta.setVideoCodec(packet.Codec)
@@ -685,6 +680,7 @@ func runStream(
 
 				ts := rtpTimestampForClock(continuousUS, clockRate)
 				if !streamPaused {
+					ts = videoRTP.next(ts)
 					for _, pkt := range pkts {
 						pkt.Timestamp = ts
 						handler.writePacket(videoMedia, pkt)
@@ -702,14 +698,14 @@ func runStream(
 
 			case baichuan.MediaPacketAAC:
 				audioPackets++
-				timestamp := audioTimestampForPacket(packet, &audioTimestamps, lastVideoTime)
+				timestamp := audioTimestampForPacket(packet, &audioTimestamps)
 				if err := audio.processAAC(packet.Data, timestamp, handler, meta, !updatePauseState(time.Now())); err != nil {
 					log.Printf("stream %s audio publish error: %v", meta.name, err)
 				}
 
 			case baichuan.MediaPacketADPCM:
 				audioPackets++
-				timestamp := audioTimestampForPacket(packet, &audioTimestamps, lastVideoTime)
+				timestamp := audioTimestampForPacket(packet, &audioTimestamps)
 				if err := audio.processADPCM(packet.Data, timestamp, handler, meta, !updatePauseState(time.Now())); err != nil {
 					log.Printf("stream %s audio adpcm publish error: %v", meta.name, err)
 				}
@@ -765,7 +761,52 @@ func (u *timestampUnwrapper) unwrap(ts32 uint32) uint64 {
 	return continuous
 }
 
-func audioTimestampForPacket(packet baichuan.MediaPacket, audioTimestamps *timestampUnwrapper, fallback mediaTimestamp) mediaTimestamp {
+type rtpTimestampGuard struct {
+	last uint32
+	set  bool
+}
+
+func (g *rtpTimestampGuard) next(ts uint32) uint32 {
+	if !g.set {
+		g.last = ts
+		g.set = true
+		return ts
+	}
+	if !rtpTimestampAfter(ts, g.last) {
+		ts = g.last + 1
+	}
+	g.last = ts
+	return ts
+}
+
+func (g *rtpTimestampGuard) applyBaseToPackets(pkts []*rtp.Packet, base uint32, duration uint32) uint32 {
+	if len(pkts) == 0 {
+		return base
+	}
+
+	first := base + pkts[0].Timestamp
+	adjusted := first
+	if g.set && rtpTimestampBefore(first, g.last) {
+		adjusted = g.last
+	}
+	if duration == 0 {
+		g.last = adjusted
+	} else {
+		g.last = adjusted + duration
+	}
+	g.set = true
+	return adjusted - pkts[0].Timestamp
+}
+
+func rtpTimestampAfter(ts uint32, prev uint32) bool {
+	return int32(ts-prev) > 0
+}
+
+func rtpTimestampBefore(ts uint32, prev uint32) bool {
+	return int32(ts-prev) < 0
+}
+
+func audioTimestampForPacket(packet baichuan.MediaPacket, audioTimestamps *timestampUnwrapper) mediaTimestamp {
 	if packet.HasTimestamp {
 		return mediaTimestamp{
 			Microseconds:  audioTimestamps.unwrap(packet.TimestampMicrosecs),
@@ -773,7 +814,7 @@ func audioTimestampForPacket(packet baichuan.MediaPacket, audioTimestamps *times
 			Authoritative: true,
 		}
 	}
-	return fallback
+	return mediaTimestamp{}
 }
 
 func unwrapTimestamp(ts32 uint32, highest64 uint64) uint64 {

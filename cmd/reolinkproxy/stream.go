@@ -387,13 +387,14 @@ func (h *rtspStreamHandler) writePacket(media *description.Media, pkt *rtp.Packe
 }
 
 type audioPublisher struct {
-	media         *description.Media
-	aacEncoder    *rtpmpeg4audio.Encoder
-	g711Encoder   *rtplpcm.Encoder
-	adpcmDecoder  *baichuan.ADPCMDecoder
-	nextTimestamp uint32
-	unsupported   bool
-	lateIgnored   bool
+	media          *description.Media
+	aacEncoder     *rtpmpeg4audio.Encoder
+	g711Encoder    *rtplpcm.Encoder
+	adpcmDecoder   *baichuan.ADPCMDecoder
+	nextTimestamp  uint32
+	timestampGuard rtpTimestampGuard
+	unsupported    bool
+	lateIgnored    bool
 }
 
 type mediaTimestamp struct {
@@ -479,21 +480,18 @@ func (p *audioPublisher) processAAC(data []byte, timestamp mediaTimestamp, handl
 		return fmt.Errorf("encode AAC RTP: %w", err)
 	}
 
+	duration := uint32(len(aus)) * mpeg4audio.SamplesPerAccessUnit
 	baseTimestamp := p.nextTimestamp
 	if timestamp.Authoritative && hasExpectedTS {
 		baseTimestamp = expectedTS
 	}
+	baseTimestamp = p.timestampGuard.applyBaseToPackets(pkts, baseTimestamp, duration)
 	for _, pkt := range pkts {
 		pkt.Timestamp += baseTimestamp
 		handler.writePacket(p.media, pkt)
 	}
 
-	duration := uint32(len(aus)) * mpeg4audio.SamplesPerAccessUnit
-	if timestamp.Authoritative && hasExpectedTS {
-		p.nextTimestamp = expectedTS + duration
-	} else {
-		p.nextTimestamp += duration
-	}
+	p.nextTimestamp = baseTimestamp + duration
 	return nil
 }
 
@@ -557,21 +555,18 @@ func (p *audioPublisher) processADPCM(data []byte, timestamp mediaTimestamp, han
 		return fmt.Errorf("encode G711 RTP: %w", err)
 	}
 
+	duration := uint32(len(pcm))
 	baseTimestamp := p.nextTimestamp
 	if timestamp.Authoritative && hasExpectedTS {
 		baseTimestamp = expectedTS
 	}
+	baseTimestamp = p.timestampGuard.applyBaseToPackets(pkts, baseTimestamp, duration)
 	for _, pkt := range pkts {
 		pkt.Timestamp += baseTimestamp
 		handler.writePacket(p.media, pkt)
 	}
 
-	duration := uint32(len(pcm))
-	if timestamp.Authoritative && hasExpectedTS {
-		p.nextTimestamp = expectedTS + duration
-	} else {
-		p.nextTimestamp += duration
-	}
+	p.nextTimestamp = baseTimestamp + duration
 	return nil
 }
 
