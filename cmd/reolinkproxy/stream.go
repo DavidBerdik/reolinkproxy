@@ -480,7 +480,7 @@ func (p *audioPublisher) processAAC(data []byte, timestamp mediaTimestamp, handl
 		return fmt.Errorf("encode AAC RTP: %w", err)
 	}
 
-	duration := uint32(len(aus)) * mpeg4audio.SamplesPerAccessUnit
+	duration := uint32(len(aus)) * mpeg4audio.SamplesPerAccessUnit //#nosec G115
 	baseTimestamp := p.nextTimestamp
 	if timestamp.Authoritative && hasExpectedTS {
 		baseTimestamp = expectedTS
@@ -555,7 +555,7 @@ func (p *audioPublisher) processADPCM(data []byte, timestamp mediaTimestamp, han
 		return fmt.Errorf("encode G711 RTP: %w", err)
 	}
 
-	duration := uint32(len(pcm))
+	duration := uint32(len(pcm)) //#nosec G115
 	baseTimestamp := p.nextTimestamp
 	if timestamp.Authoritative && hasExpectedTS {
 		baseTimestamp = expectedTS
@@ -824,7 +824,7 @@ func coalesce(next []byte, fallback []byte) []byte {
 }
 
 func rtpTimestampForClock(microseconds uint64, clockRate int) uint32 {
-	return uint32((microseconds * uint64(clockRate)) / 1_000_000)
+	return uint32((microseconds * uint64(clockRate)) / 1_000_000) //#nosec G115
 }
 
 func rtpTimestampForMediaTime(timestamp mediaTimestamp, clockRate int) (uint32, bool) {

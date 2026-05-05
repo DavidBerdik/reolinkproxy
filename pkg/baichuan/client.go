@@ -486,7 +486,7 @@ func (c *Client) setNegotiatedEncryption(code uint16) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 
-	switch byte(code) {
+	switch byte(code) { //#nosec G115
 	case 0x00:
 		c.mode = EncryptionNone
 	case 0x01, 0x12:

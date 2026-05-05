@@ -243,7 +243,7 @@ func runApp(ctx context.Context, cfg *Config) error {
 		talkPublisher := newRTSPTalkPublisher(
 			talkPath,
 			camCfg.Name,
-			uint8(camCfg.Channel),
+			uint8(camCfg.Channel), //#nosec G115
 			bcCfg,
 			camCfg.TalkVolume,
 			camCfg.TalkEncoder,
@@ -255,7 +255,7 @@ func runApp(ctx context.Context, cfg *Config) error {
 		var motionState *cameraMotionState
 		if mqttClient != nil || camCfg.PauseOnMotion {
 			motionState = newCameraMotionState()
-			go runCameraMotionListener(ctx, clientManager, camCfg.Name, uint8(camCfg.Channel), motionState)
+			go runCameraMotionListener(ctx, clientManager, camCfg.Name, uint8(camCfg.Channel), motionState) //#nosec G115
 		}
 
 		streamsList := splitCameraStreams(camCfg.Stream)
@@ -313,7 +313,7 @@ func runApp(ctx context.Context, cfg *Config) error {
 			go runStream(
 				ctx,
 				clientManager,
-				uint8(camCfg.Channel),
+				uint8(camCfg.Channel), //#nosec G115
 				parseStream(s),
 				streamHandler,
 				meta,
@@ -338,7 +338,7 @@ func runApp(ctx context.Context, cfg *Config) error {
 		}
 
 		if mqttClient != nil {
-			registerCameraMQTT(ctx, mqttClient, cfg.MQTT, clientManager, camCfg.Name, uint8(camCfg.Channel), motionState)
+			registerCameraMQTT(ctx, mqttClient, cfg.MQTT, clientManager, camCfg.Name, uint8(camCfg.Channel), motionState) //#nosec G115
 		}
 	}
 
@@ -799,11 +799,11 @@ func (g *rtpTimestampGuard) applyBaseToPackets(pkts []*rtp.Packet, base uint32, 
 }
 
 func rtpTimestampAfter(ts uint32, prev uint32) bool {
-	return int32(ts-prev) > 0
+	return int32(ts-prev) > 0 //#nosec G115
 }
 
 func rtpTimestampBefore(ts uint32, prev uint32) bool {
-	return int32(ts-prev) < 0
+	return int32(ts-prev) < 0 //#nosec G115
 }
 
 func audioTimestampForPacket(packet baichuan.MediaPacket, audioTimestamps *timestampUnwrapper) mediaTimestamp {

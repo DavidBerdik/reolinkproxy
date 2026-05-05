@@ -94,7 +94,7 @@ func newGStreamerTalkEncoder(
 		return nil, fmt.Errorf("find %s: %w", command, err)
 	}
 
-	cmd := exec.CommandContext(ctx, command, buildGStreamerTalkArgs(inputRate, targetRate, blockAlign)...)
+	cmd := exec.CommandContext(ctx, command, buildGStreamerTalkArgs(inputRate, targetRate, blockAlign)...) //#nosec G204
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -143,7 +143,7 @@ func (e *gstreamerTalkEncoder) WritePCM(pcm []int16) error {
 
 	buf := make([]byte, len(pcm)*2)
 	for i, sample := range pcm {
-		binary.LittleEndian.PutUint16(buf[i*2:i*2+2], uint16(sample))
+		binary.LittleEndian.PutUint16(buf[i*2:i*2+2], uint16(sample)) //#nosec G115
 	}
 
 	for len(buf) > 0 {

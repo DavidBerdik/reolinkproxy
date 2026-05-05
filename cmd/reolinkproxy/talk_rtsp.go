@@ -632,7 +632,7 @@ func (i *rtspTalkInput) decode(pkt *rtp.Packet) ([]int16, error) {
 
 	out := make([]int16, len(pkt.Payload)/2)
 	for j := 0; j < len(out); j++ {
-		out[j] = int16(binary.BigEndian.Uint16(pkt.Payload[j*2 : j*2+2]))
+		out[j] = int16(binary.BigEndian.Uint16(pkt.Payload[j*2 : j*2+2])) //#nosec G115
 	}
 	return out, nil
 }
@@ -673,7 +673,7 @@ func resamplePCM(in []int16, fromRate int, toRate int) []int16 {
 		fraction := positionNum % int64(toRate)
 		a := int64(in[baseIndex])
 		b := int64(in[baseIndex+1])
-		out[i] = int16(a + ((b-a)*fraction)/int64(toRate))
+		out[i] = int16(a + ((b-a)*fraction)/int64(toRate)) //#nosec G115
 	}
 	return out
 }

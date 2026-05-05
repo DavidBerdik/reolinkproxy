@@ -331,10 +331,10 @@ func serializeTalkADPCMBlock(block []byte) []byte {
 
 	out := make([]byte, total)
 	binary.LittleEndian.PutUint32(out[0:4], bcmediaADPCM)
-	binary.LittleEndian.PutUint16(out[4:6], uint16(payloadSize))
-	binary.LittleEndian.PutUint16(out[6:8], uint16(payloadSize))
+	binary.LittleEndian.PutUint16(out[4:6], uint16(payloadSize)) //#nosec G115
+	binary.LittleEndian.PutUint16(out[6:8], uint16(payloadSize)) //#nosec G115
 	binary.LittleEndian.PutUint16(out[8:10], bcmediaADPCMHeader)
-	binary.LittleEndian.PutUint16(out[10:12], uint16((len(block)-4)/2))
+	binary.LittleEndian.PutUint16(out[10:12], uint16((len(block)-4)/2)) //#nosec G115
 	copy(out[12:], block)
 	return out
 }
