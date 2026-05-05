@@ -773,6 +773,7 @@ func audioTimestampForPacket(packet baichuan.MediaPacket, audioTimestamps *times
 			Authoritative: true,
 		}
 	}
+	fallback.Authoritative = false
 	return fallback
 }
 

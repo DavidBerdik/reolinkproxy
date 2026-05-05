@@ -80,7 +80,7 @@ func TestTimestampUnwrapperWrapsForward(t *testing.T) {
 	}
 }
 
-func TestAudioTimestampForPacketUsesFallbackWithoutUpdatingAudioClock(t *testing.T) {
+func TestAudioTimestampForPacketUsesFallbackAsNonAuthoritative(t *testing.T) {
 	t.Parallel()
 
 	var audioTimestamps timestampUnwrapper
@@ -91,8 +91,13 @@ func TestAudioTimestampForPacketUsesFallbackWithoutUpdatingAudioClock(t *testing
 	}
 
 	got := audioTimestampForPacket(baichuan.MediaPacket{Kind: baichuan.MediaPacketAAC}, &audioTimestamps, fallback)
-	if got != fallback {
-		t.Fatalf("audioTimestampForPacket() = %+v, want %+v", got, fallback)
+	want := mediaTimestamp{
+		Microseconds:  3_000_000_000,
+		Valid:         true,
+		Authoritative: false,
+	}
+	if got != want {
+		t.Fatalf("audioTimestampForPacket() = %+v, want %+v", got, want)
 	}
 	if audioTimestamps.highest != 0 {
 		t.Fatalf("audioTimestamps.highest = %d, want 0", audioTimestamps.highest)
