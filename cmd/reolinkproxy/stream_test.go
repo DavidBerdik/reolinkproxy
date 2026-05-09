@@ -72,6 +72,7 @@ func TestTimestampUnwrapperWrapsForward(t *testing.T) {
 	t.Parallel()
 
 	var timestamps timestampUnwrapper
+	timestamps.nowUnixMicro = func() int64 { return 0xfffffff0 }
 	if got, want := timestamps.unwrap(0xfffffff0), uint64(0xfffffff0); got != want {
 		t.Fatalf("first unwrap = %d, want %d", got, want)
 	}
@@ -160,6 +161,7 @@ func TestAudioTimestampForPacketUsesAuthoritativePacketTimestamp(t *testing.T) {
 	t.Parallel()
 
 	var audioTimestamps timestampUnwrapper
+	audioTimestamps.nowUnixMicro = func() int64 { return 1234 }
 	packet := baichuan.MediaPacket{
 		Kind:               baichuan.MediaPacketAAC,
 		TimestampMicrosecs: 1234,

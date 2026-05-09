@@ -753,11 +753,21 @@ type timestampUnwrapper struct {
 	highest uint64
 	offset  uint64
 	baseSet bool
+	// nowUnixMicro is optional; when nil, time.Now().UnixMicro is used (first sample anchors to wall clock).
+	nowUnixMicro func() int64
 }
 
 func (u *timestampUnwrapper) unwrap(ts32 uint32) uint64 {
 	if !u.baseSet {
-		systemMicro := uint64(time.Now().UnixMicro())
+		nowFn := func() int64 { return time.Now().UnixMicro() }
+		if u.nowUnixMicro != nil {
+			nowFn = u.nowUnixMicro
+		}
+		micros := nowFn()
+		if micros < 0 {
+			micros = 0
+		}
+		systemMicro := uint64(micros)
 		u.offset = systemMicro - uint64(ts32)
 		u.highest = uint64(ts32)
 		u.baseSet = true
@@ -784,7 +794,10 @@ func (g *rtpTimestampGuard) next(ts uint32) uint32 {
 		return ts
 	}
 	adjusted := ts + g.offset
-	if !rtpTimestampAfter(adjusted, g.last) {
+	if ts == g.last {
+		g.offset = g.last + 1 - ts
+		adjusted = g.last + 1
+	} else if !rtpTimestampAfter(adjusted, g.last) {
 		g.offset = g.last + 1 - ts
 		adjusted = ts + g.offset
 	}
@@ -797,10 +810,15 @@ func (g *rtpTimestampGuard) applyBaseToPackets(pkts []*rtp.Packet, base uint32, 
 		return base
 	}
 
-	first := base + pkts[0].Timestamp + g.offset
+	sum := base + pkts[0].Timestamp //#nosec G115
+	first := sum + g.offset
+	if g.set && sum == g.last {
+		g.offset = 0
+		first = sum
+	}
 	if g.set && rtpTimestampBefore(first, g.last) {
-		g.offset = g.last - (base + pkts[0].Timestamp)
-		first = base + pkts[0].Timestamp + g.offset
+		g.offset = g.last - sum
+		first = sum + g.offset
 	}
 
 	adjusted := first

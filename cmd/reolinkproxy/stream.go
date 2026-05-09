@@ -202,8 +202,8 @@ func (h *rtspServerHandler) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*ba
 			time.Sleep(100 * time.Millisecond)
 		}
 
-		// Fallback: If the stream isn't ready but it's a talk-capable path, 
-		// we should still allow it to fall through to the talk handler 
+		// Fallback: If the stream isn't ready but it's a talk-capable path,
+		// we should still allow it to fall through to the talk handler
 		// instead of returning 503, because backchannels don't need the video stream to be ready.
 		if h.getTalk(ctx.Path) == nil {
 			log.Printf("RTSP Client SETUP: path=%s (503 Service Unavailable - not ready)", ctx.Path)

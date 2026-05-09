@@ -275,7 +275,7 @@ func (p *rtspTalkPublisher) startBridge(session *gortsplib.ServerSession, path s
 		return nil
 	}
 
-	state, active := p.ensureSessionState(session)
+	_, active := p.ensureSessionState(session)
 	if active == nil {
 		return fmt.Errorf("failed to initialize talk session state")
 	}
@@ -434,7 +434,7 @@ func (p *rtspTalkPublisher) runBridgeController(
 func (p *rtspTalkPublisher) runBridge(
 	state *rtspTalkSessionState,
 	input *rtspTalkInput,
-	talkClient *baichuan.Client,
+	_ *baichuan.Client,
 	talkSession *baichuan.TalkSession,
 	firstPcm []int16,
 ) {
