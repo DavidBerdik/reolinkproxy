@@ -25,8 +25,14 @@ cameras:
     password: "secret_password"
     timeout: 10s
     stream: "main,sub"
+    # Optional mid-tier ext stream (Reolink channel0_ext.bcs; higher res than sub on some doorbells):
+    # stream: "main,sub,extern"
+    # talk_profile: sub
     channel: 0
-    rtsp_path: "Camera01/stream" # Creates Camera01/stream_main and Camera01/stream_sub
+    rtsp_path: "Camera01/stream"
+    # With stream=main,sub: Camera01/stream_main, Camera01/stream_sub
+    # With stream=main,sub,extern: also Camera01/stream_extern
+    # talk_profile selects which profile gets the clean Camera01/stream alias
 
 # - name: "Camera02"
 #   host: "192.168.1.101"

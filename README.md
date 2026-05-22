@@ -2,16 +2,16 @@
 
 A lightweight Go proxy that translates Reolink's proprietary Baichuan protocol into standard RTSP streams and a compliant ONVIF API.
 
-It is aimed at battery Reolink cameras and other models that do not expose native RTSP/ONVIF, or that are easier to reach through Reolink UID/P2P than direct LAN access.
+It is aimed at battery Reolink cameras and other models that do not expose native RTSP/ONVIF, or that are reachable on the LAN by IP or by Reolink UID (local UDP discovery on the same network segment).
 
 ## Features
 
-* Connects to cameras by local IP or Reolink UID.
+* Connects to cameras by local IP (TCP) or Reolink UID (LAN broadcast discovery on the same subnet).
 * Repackages H.264/H.265 video to RTSP without video transcoding.
 * Transcodes Reolink ADPCM audio to PCMA and passes AAC through.
 * Exposes ONVIF `Device` and `Media` services with WS-Security auth support.
 * Broadcasts WS-Discovery for local ONVIF discovery.
-* Supports multiple streams per camera such as `main` and `sub`.
+* Supports multiple streams per camera: `main`, `sub`, and `extern` (mid-tier ext).
 * Publishes MQTT motion and control topics for Home Assistant and similar systems.
 * Can pause streams or stop preview sessions when cameras are idle.
 * Supports RTSP talkback publish endpoints that bridge client audio into Baichuan two-way audio.
@@ -63,6 +63,43 @@ Camera defaults:
 * `TALK_VOLUME=100`
 * `TALK_ENCODER=internal`
 
+### Connecting by UID (local LAN only)
+
+`REOLINK_CAMERA_<n>_UID` uses **UDP broadcast discovery** on ports **2015** and **2018**. The camera must be on the **same L2 broadcast domain** as the proxy (same VLAN/subnet, or the proxy host has a NIC on that segment). The proxy does **not**:
+
+* search other subnets or routed networks (e.g. proxy on `10.x` and camera on `30.x` will not discover via UID),
+* scan IP ranges,
+* use Reolink cloud / remote P2P relay.
+
+If discovery fails you will see `uid discovery timed out` (default wait: `TIMEOUT=10s`, overridable with `REOLINK_CAMERA_<n>_TIMEOUT`).
+
+**Cross-subnet or known IP:** use `REOLINK_CAMERA_<n>_HOST` instead (Baichuan TCP on port **9000**). Ensure the proxy host can reach the camera (firewall allows TCP 9000). If both `HOST` and `UID` are set, **HOST wins** and UID discovery is not used.
+
+**Docker:** for UID mode on a home LAN, use `network_mode: host` so broadcasts leave the host stack (bridged/NAT Docker often blocks discovery, similar to ONVIF WS-Discovery).
+
+Example (current env layout — replace older flat `REOLINK_UID` / `REOLINK_STREAM` vars from early images):
+
+```yaml
+environment:
+  - REOLINK_CAMERA_0_NAME=backyard
+  - REOLINK_CAMERA_0_UID=ABCDEFGHIJKLMNOP
+  - REOLINK_CAMERA_0_USERNAME=admin
+  - REOLINK_CAMERA_0_PASSWORD=secret
+  - REOLINK_CAMERA_0_STREAM=main,sub
+  - REOLINK_ONVIF_USERNAME=admin
+  - REOLINK_ONVIF_PASSWORD=secret_onvif_password
+```
+
+Cross-subnet example:
+
+```yaml
+environment:
+  - REOLINK_CAMERA_0_NAME=backyard
+  - REOLINK_CAMERA_0_HOST=10.10.30.23
+  - REOLINK_CAMERA_0_USERNAME=admin
+  - REOLINK_CAMERA_0_PASSWORD=secret
+```
+
 Pause and lifecycle options:
 
 * `PAUSE_ON_CLIENT=true` pauses RTSP packet publishing when no RTSP client is actively playing the stream.
@@ -76,6 +113,77 @@ Talkback options:
 * This is useful when `main` is H.265 and `sub` is H.264, since some clients are more stable with talkback on the H.264 profile.
 * `TALK_ENCODER=internal` is the default and is recommended for Reolink Argus battery cameras.
 * `TALK_ENCODER=gstreamer` is available as an explicit opt-in, but some cameras may go silent after a few seconds.
+
+### Stream profiles
+
+Set `REOLINK_CAMERA_<n>_STREAM` to a comma-separated list of profile names. The proxy pulls live video over Baichuan (port 9000), not camera FLV or RTSP URLs.
+
+| Profile | Baichuan | Typical Reolink equivalent | Role |
+| :--- | :--- | :--- | :--- |
+| `main` | `mainStream` | `channel0_main.bcs`, main RTSP | Highest resolution (often H.265) |
+| `extern` | `externStream` | `channel0_ext.bcs`, FLV ext URL | Mid-tier sub (e.g. doorbell ~896x672, H.264) |
+| `sub` | `subStream` | `channel0_sub.bcs`, `Preview_01_sub` | Lowest sub (e.g. 640x480) |
+
+With `RTSP_PATH=doorbell/stream` and `STREAM=main,sub,extern`:
+
+* `rtsp://<PROXY_IP>:8554/doorbell/stream_main`
+* `rtsp://<PROXY_IP>:8554/doorbell/stream_sub`
+* `rtsp://<PROXY_IP>:8554/doorbell/stream_extern`
+
+If `TALK_PROFILE` is set to one of the configured profiles, that profile also gets a clean alias at `doorbell/stream` (same as today for `sub`). Example: `TALK_PROFILE=sub` keeps talkback on the low sub stream while you point detect at `doorbell/stream_extern`.
+
+#### RTSP URL layout (`main` + `sub`)
+
+With `NAME=voorkant`, default `RTSP_PATH=voorkant/stream`, `STREAM=main,sub`, and `TALK_PROFILE=sub`:
+
+| URL | Profile | Notes |
+| :--- | :--- | :--- |
+| `rtsp://<PROXY_IP>:8554/voorkant/stream_main` | main | Highest resolution |
+| `rtsp://<PROXY_IP>:8554/voorkant/stream_sub` | sub | Lower resolution |
+| `rtsp://<PROXY_IP>:8554/voorkant/stream` | sub | Alias of `TALK_PROFILE` (not main) |
+| `rtsp://<PROXY_IP>:8554/voorkant/stream_twoway` | sub | Same video as `…/stream`, plus RTSP backchannel |
+| `rtsp://<PROXY_IP>:8554/voorkant/stream_main_twoway` | main | Main with backchannel |
+| `rtsp://<PROXY_IP>:8554/voorkant/stream_sub_twoway` | sub | Sub with backchannel |
+
+Common misconception: with `TALK_PROFILE=sub`, **`…/stream` is not the main stream** — use `…/stream_main` for record/detect at full resolution.
+
+**`_twoway` does not pick main vs sub.** It only adds two-way audio on the **same** profile as the path it suffixes. `stream` and `stream_twoway` therefore share the same resolution when both are aliases of `sub`.
+
+Set `TALK_PROFILE=main` to alias `voorkant/stream` and `voorkant/stream_twoway` to main instead (some clients struggle with H.265 main for talkback; explicit `…/stream_main` and `…/stream_sub` paths always work).
+
+`extern` resolution and FPS are fixed by camera firmware (not configurable in the Reolink app). Not every model exposes `externStream`; if preview fails, omit `extern` and use `sub` only.
+
+#### Doorbell / higher-resolution detect
+
+Many doorbells expose a higher-resolution mid stream via FLV `channel0_ext.bcs` while native RTSP sub (`Preview_01_sub`) stays at 640x480. Use the `extern` profile instead of pulling FLV directly:
+
+```bash
+REOLINK_CAMERA_0_STREAM=main,sub,extern
+REOLINK_CAMERA_0_RTSP_PATH=doorbell/stream
+REOLINK_CAMERA_0_TALK_PROFILE=sub
+```
+
+Point detect/record clients at `rtsp://<PROXY_IP>:8554/doorbell/stream_extern`. Confirm resolution in proxy logs (`info size=...`) or with `ffprobe` on that URL.
+
+Frigate example:
+
+```yaml
+cameras:
+  doorbell:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/doorbell/stream_extern
+          roles: [detect]
+```
+
+To use the ext stream as the default alias (no `_extern` suffix in client URLs):
+
+```bash
+REOLINK_CAMERA_0_STREAM=main,extern
+REOLINK_CAMERA_0_TALK_PROFILE=extern
+```
+
+Then `rtsp://<PROXY_IP>:8554/doorbell/stream` is the ext tier.
 
 `PAUSE_ON_MOTION` only affects cameras that support the Baichuan motion listener. If motion is unsupported, the stream stays active and MQTT motion state is not published for that camera.
 
@@ -123,6 +231,7 @@ services:
       - REOLINK_CAMERA_0_PASSWORD=your_camera_password
       - REOLINK_CAMERA_0_STREAM=main,sub
       - REOLINK_CAMERA_0_TALK_PROFILE=sub
+      # Main stream: rtsp://<host>:8554/front/stream_main (not …/stream when TALK_PROFILE=sub)
       - REOLINK_CAMERA_0_CHANNEL=0
       - REOLINK_CAMERA_0_PAUSE_ON_CLIENT=true
       - REOLINK_CAMERA_0_IDLE_DISCONNECT=true
@@ -210,10 +319,12 @@ For more flag details:
 
 ## Two-Way Audio
 
-Each playable stream has a normal video/audio path and a separate playable two-way path:
+Each playable stream profile has a normal path and a `_twoway` variant on **that same profile** (see [RTSP URL layout](#rtsp-url-layout-main--sub) above). The `_twoway` suffix enables the RTSP backchannel; it does **not** switch from main to sub.
 
-* `<STREAM_PATH>`
-* `<STREAM_PATH>_twoway`
+* `<STREAM_PATH>` — playback without backchannel
+* `<STREAM_PATH>_twoway` — same resolution/codec, plus microphone/talkback
+
+With `STREAM=main,sub` and `TALK_PROFILE=sub`, both `front/stream` and `front/stream_twoway` are the **sub** profile. Use `front/stream_main` or `front/stream_main_twoway` for main.
 
 The normal path does not advertise the RTSP backchannel. Use it for always-on detect/record clients such as Frigate ffmpeg. Use the `_twoway` path only for live-view clients that should expose microphone/talkback.
 
