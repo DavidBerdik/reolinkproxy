@@ -50,11 +50,42 @@ func TestTimestampUnwrapperBoundsSustainedDrift(t *testing.T) {
 				source += step
 				videoNTP := ntpFromMicros(clock.unwrap(source))
 				drift := videoNTP.Sub(time.UnixMicro(now))
-				if drift < -time.Second || drift > time.Second {
+				// A slow clock may lag up to a second before the late-hold
+				// timer starts, plus drift accumulated during the five-second
+				// hold; a fast clock re-anchors as soon as it runs ahead.
+				if drift < -1100*time.Millisecond || drift > time.Second {
 					t.Fatalf("frame %d: video clock drift = %v", frame, drift)
 				}
 			}
 		})
+	}
+}
+
+func TestTimestampUnwrapperToleratesDeliveryBurst(t *testing.T) {
+	t.Parallel()
+
+	now := int64(1_700_000_000_000_000)
+	clock := timestampUnwrapper{nowUnixMicro: func() int64 { return now }}
+	src := uint32(1_000_000)
+	prev := clock.unwrap(src)
+	step := func(arrivalUS int64) {
+		now += arrivalUS
+		src += 40_000
+		got := clock.unwrap(src)
+		if got != prev+40_000 {
+			t.Fatalf("frame at src %d = %d, want camera-paced %d", src, got, prev+40_000)
+		}
+		prev = got
+	}
+	for range 100 {
+		step(40_000)
+	}
+	now += 37 * 40_000 // 1.5 s delivery stall
+	for range 37 {
+		step(1_000) // backlog drains as a burst
+	}
+	for range 100 {
+		step(40_000)
 	}
 }
 

@@ -829,6 +829,9 @@ type timestampUnwrapper struct {
 	highest uint64
 	offset  uint64
 	baseSet bool
+	// lateSince is the arrival time since which frames have lagged the mapped
+	// clock by more than maxDriftUS (0 when not lagging).
+	lateSince uint64
 	// nowUnixMicro is optional; when nil, the arrival wall clock is used.
 	nowUnixMicro func() int64
 }
@@ -853,13 +856,28 @@ func (u *timestampUnwrapper) unwrap(ts32 uint32) uint64 {
 	continuous := unwrapTimestamp(ts32, u.highest)
 	mapped := continuous + u.offset
 	// Timestamp-less audio anchors to arrival time and corrects drift above
-	// one second. Keep video on that same wall-clock timeline, including
-	// when a camera resets its counter while StreamPackets reconnects.
-	const maxDriftUS = uint64(time.Second / time.Microsecond)
-	if (mapped > systemMicro && mapped-systemMicro > maxDriftUS) ||
-		(mapped < systemMicro && systemMicro-mapped > maxDriftUS) {
+	// one second. Keep video on that same wall-clock timeline. A frame cannot
+	// arrive before it was captured, so running ahead means a fast clock or a
+	// forward counter jump: re-anchor at once. Lagging may be just a delivery
+	// stall draining as a burst, so re-anchor only when the lag is huge
+	// (counter reset, e.g. across a StreamPackets reconnect) or persists
+	// (slow camera clock).
+	const (
+		maxDriftUS = uint64(time.Second / time.Microsecond)
+		maxLagUS   = uint64(15 * time.Second / time.Microsecond)
+		lateHoldUS = uint64(5 * time.Second / time.Microsecond)
+	)
+	ahead := mapped > systemMicro+maxDriftUS
+	behind := mapped+maxDriftUS < systemMicro
+	if !behind {
+		u.lateSince = 0
+	} else if u.lateSince == 0 {
+		u.lateSince = systemMicro
+	}
+	if ahead || (behind && (systemMicro-mapped > maxLagUS || systemMicro-u.lateSince > lateHoldUS)) {
 		u.offset = systemMicro - continuous
 		u.highest = continuous
+		u.lateSince = 0
 		return systemMicro
 	}
 	if continuous > u.highest {
